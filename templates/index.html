@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <main class="page-shell">
+        <section class="app-card">
+            <header class="page-header">
+                <p class="eyebrow">Internal Tool</p>
+                <h1>Log Analyzer</h1>
+                <p class="page-description">
+                    Upload a log file or paste raw logs to review counts, error patterns,
+                    SQL issues, and hourly trends in one place.
+                </p>
+            </header>
+
+            <section class="section-card">
+                <div class="section-heading">
+                    <h2>Input</h2>
+                    <p>Choose a file or paste logs directly into the editor.</p>
+                </div>
+
+                <form id="analyze-form" enctype="multipart/form-data" class="analysis-form">
+                    <div class="input-grid">
+                        <div class="field-group">
+                            <label for="log_file">Upload file</label>
+                            <input id="log_file" type="file" name="log_file" accept=".log,.txt">
+                            <p class="field-help">Accepted formats: `.log`, `.txt`</p>
+                        </div>
+
+                        <div class="field-group field-group-wide">
+                            <label for="log_text">Paste logs</label>
+                            <textarea
+                                id="log_text"
+                                name="log_text"
+                                rows="10"
+                                placeholder="2026-04-20 10:15:32 ERROR Database connection failed"
+                            ></textarea>
+                            <p class="field-help">Use this when you want to test without uploading a file.</p>
+                        </div>
+                    </div>
+
+                    <div class="actions-row">
+                        <button id="analyze-button" type="submit" class="primary-button">Analyze Logs</button>
+                        <p id="loading-text" class="loading-text hidden">Analyzing logs, please wait...</p>
+                    </div>
+                </form>
+            </section>
+
+            <section id="error-box" class="message-card error-message hidden">
+                <strong>Analysis failed</strong>
+                <p id="error-text"></p>
+            </section>
+
+            <section id="results" class="section-card hidden">
+                <div class="section-heading">
+                    <h2>Results</h2>
+                    <p>Review the summary, breakdowns, and charts generated from the latest analysis.</p>
+                </div>
+
+                <div class="summary-grid">
+                    <article class="summary-tile">
+                        <span class="summary-label">Source</span>
+                        <strong id="result-source" class="summary-value">-</strong>
+                    </article>
+                    <article class="summary-tile">
+                        <span class="summary-label">Total Logs</span>
+                        <strong id="result-total-logs" class="summary-value">0</strong>
+                    </article>
+                    <article class="summary-tile summary-tile-highlight">
+                        <span class="summary-label">Errors</span>
+                        <strong id="result-error-total" class="summary-value">0</strong>
+                    </article>
+                    <article class="summary-tile">
+                        <span class="summary-label">Peak Error Time</span>
+                        <strong id="result-peak-time" class="summary-value">-</strong>
+                    </article>
+                    <article class="summary-tile">
+                        <span class="summary-label">Slow Queries</span>
+                        <strong id="result-slow-queries" class="summary-value">0</strong>
+                    </article>
+                    <article class="summary-tile">
+                        <span class="summary-label">Worst Query</span>
+                        <strong id="result-worst-query" class="summary-value summary-value-small">-</strong>
+                    </article>
+                </div>
+
+                <div class="details-grid">
+                    <section class="detail-card">
+                        <h3>Error Counts</h3>
+                        <pre id="result-error-counts"></pre>
+                    </section>
+
+                    <section class="detail-card">
+                        <h3>Error Breakdown</h3>
+                        <pre id="result-categorized-errors"></pre>
+                    </section>
+
+                    <section class="detail-card">
+                        <h3>Time Analysis</h3>
+                        <pre id="result-time-analysis"></pre>
+                    </section>
+
+                    <section class="detail-card">
+                        <h3>SQL Analysis</h3>
+                        <pre id="result-sql-analysis"></pre>
+                    </section>
+                </div>
+
+                <div class="chart-grid">
+                    <section class="chart-card">
+                        <h3>Error Types Distribution</h3>
+                        <canvas id="error-types-chart"></canvas>
+                    </section>
+
+                    <section class="chart-card">
+                        <h3>Errors Over Time</h3>
+                        <canvas id="errors-over-time-chart"></canvas>
+                    </section>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <script>
+        const form = document.getElementById("analyze-form");
+        const resultsSection = document.getElementById("results");
+        const errorBox = document.getElementById("error-box");
+        const errorText = document.getElementById("error-text");
+        const submitButton = document.getElementById("analyze-button");
+        const loadingText = document.getElementById("loading-text");
+        let errorTypesChart = null;
+        let errorsOverTimeChart = null;
+
+        function destroyCharts() {
+            if (errorTypesChart) {
+                errorTypesChart.destroy();
+                errorTypesChart = null;
+            }
+
+            if (errorsOverTimeChart) {
+                errorsOverTimeChart.destroy();
+                errorsOverTimeChart = null;
+            }
+        }
+
+        function setLoadingState(isLoading) {
+            submitButton.disabled = isLoading;
+            submitButton.textContent = isLoading ? "Analyzing..." : "Analyze Logs";
+            loadingText.classList.toggle("hidden", !isLoading);
+        }
+
+        function formatJson(data) {
+            return JSON.stringify(data, null, 2);
+        }
+
+        function showError(message) {
+            errorText.textContent = message;
+            errorBox.classList.remove("hidden");
+            resultsSection.classList.add("hidden");
+            destroyCharts();
+        }
+
+        function renderCharts(data) {
+            const categorizedErrors = data.categorized_errors || {};
+            const errorsByHour = data.time_analysis?.errors_by_hour || {};
+
+            const errorTypeLabels = Object.keys(categorizedErrors);
+            const errorTypeValues = Object.values(categorizedErrors);
+            const hourLabels = Object.keys(errorsByHour).sort();
+            const hourValues = hourLabels.map(function (hour) {
+                return errorsByHour[hour];
+            });
+
+            const pieContext = document.getElementById("error-types-chart");
+            const lineContext = document.getElementById("errors-over-time-chart");
+
+            errorTypesChart = new Chart(pieContext, {
+                type: "pie",
+                data: {
+                    labels: errorTypeLabels.length ? errorTypeLabels : ["No errors"],
+                    datasets: [{
+                        data: errorTypeValues.length ? errorTypeValues : [1],
+                        backgroundColor: ["#1d4ed8", "#ea580c", "#16a34a", "#dc2626", "#7c3aed", "#0891b2"]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: "bottom"
+                        }
+                    }
+                }
+            });
+
+            errorsOverTimeChart = new Chart(lineContext, {
+                type: "line",
+                data: {
+                    labels: hourLabels,
+                    datasets: [{
+                        label: "Errors",
+                        data: hourValues,
+                        borderColor: "#1d4ed8",
+                        backgroundColor: "rgba(29, 78, 216, 0.12)",
+                        fill: true,
+                        tension: 0.25
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function showResults(data) {
+            const errorTotal = data.error_counts?.ERROR ?? 0;
+            const peakTime = data.time_analysis?.peak_error_time ?? "-";
+            const slowQueries = data.sql_analysis?.slow_queries ?? 0;
+            const worstQuery = data.sql_analysis?.worst_query ?? "-";
+
+            destroyCharts();
+            document.getElementById("result-source").textContent = data.source;
+            document.getElementById("result-total-logs").textContent = data.total_logs;
+            document.getElementById("result-error-total").textContent = errorTotal;
+            document.getElementById("result-peak-time").textContent = peakTime;
+            document.getElementById("result-slow-queries").textContent = slowQueries;
+            document.getElementById("result-worst-query").textContent = worstQuery;
+            document.getElementById("result-error-counts").textContent = formatJson(data.error_counts);
+            document.getElementById("result-categorized-errors").textContent = formatJson(data.categorized_errors);
+            document.getElementById("result-time-analysis").textContent = formatJson(data.time_analysis);
+            document.getElementById("result-sql-analysis").textContent = formatJson(data.sql_analysis);
+
+            errorBox.classList.add("hidden");
+            resultsSection.classList.remove("hidden");
+            renderCharts(data);
+        }
+
+        form.addEventListener("submit", async function (event) {
+            event.preventDefault();
+
+            errorBox.classList.add("hidden");
+            setLoadingState(true);
+
+            try {
+                const formData = new FormData(form);
+                const response = await fetch("{{ url_for('analyze') }}", {
+                    method: "POST",
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(data.error || "Something went wrong while analyzing logs.");
+                    return;
+                }
+
+                showResults(data);
+            } catch (error) {
+                showError("Unable to reach the server. Please try again.");
+            } finally {
+                setLoadingState(false);
+            }
+        });
+    </script>
+</body>
+</html>
