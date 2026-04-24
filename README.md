@@ -6,7 +6,7 @@ This repository is intentionally simple in architecture while still presenting a
 
 ## Live Demo
 
-Deployed application: [https://log-analyzer-rwj2.onrender.com/](https://log-analyzer-rwj2.onrender.com/)
+Deployed application: [View Live Project/](https://log-analyzer-rwj2.onrender.com/)
 
 ## Features
 
