@@ -4,6 +4,10 @@ A lightweight Flask-based web application for analyzing application log files th
 
 This repository is intentionally simple in architecture while still presenting a production-style developer experience: a clear API boundary, modular parsing logic, and a readable frontend with visual charts.
 
+## Live Demo
+
+Deployed application: [https://log-analyzer-rwj2.onrender.com/](https://log-analyzer-rwj2.onrender.com/)
+
 ## Features
 
 - Upload `.log` and `.txt` files for analysis
